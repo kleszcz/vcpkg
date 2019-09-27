@@ -1,12 +1,12 @@
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO assimp/assimp
-    REF v5.2.4
-    SHA512 ee988b1806b46c78f97bb5b25237a3f56a7028ed37898fb9b243e379e29e8bfd29e4dffc616566941ed9bdcf502bd30568904ad2ef2ef7d0f63b40daefdc66bf
+    REF v5.0.0
+    SHA512 0f73b6e961cd8455d6b6c8c10ed8b99485d846c96377b5d4fcc3b83f737647207c1306aa3dd51dad9654fbfa61bfe1119b34646f90288ae7ecab45efa6fa418a
     HEAD_REF master
     PATCHES
-        build_fixes.patch
-        4542.patch # https://github.com/assimp/assimp/pull/4542
+        uninitialized-variable.patch
+        fix-static-build-error.patch
 )
 
 file(REMOVE "${SOURCE_PATH}/cmake-modules/FindZLIB.cmake")
