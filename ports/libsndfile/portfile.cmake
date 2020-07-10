@@ -19,6 +19,9 @@ option(BUILD_EXECUTABLES "Build sndfile tools and install to folder tools" OFF)
 
 if("external-libs" IN_LIST FEATURES)
     set(SNDFILE_WITHOUT_EXTERNAL_LIBS OFF)
+    if(VCPKG_LIBRARY_LINKAGE STREQUAL "static")
+        set(FLAC_EXPORT_DEFINITION "-DFLAC__NO_DLL")
+    endif()
 else()
     set(SNDFILE_WITHOUT_EXTERNAL_LIBS ON)
 endif()
@@ -26,7 +29,7 @@ endif()
 vcpkg_configure_cmake(
     SOURCE_PATH ${SOURCE_PATH}
     PREFER_NINJA
-    OPTIONS 
+    OPTIONS
         -DBUILD_EXAMPLES=OFF
         -DBUILD_REGTEST=OFF
         -DBUILD_TESTING=OFF
@@ -34,6 +37,7 @@ vcpkg_configure_cmake(
         -DENABLE_STATIC_RUNTIME=${CRT_LIB_STATIC}
         -DBUILD_STATIC_LIBS=${BUILD_STATIC}
         -DDISABLE_EXTERNAL_LIBS=${SNDFILE_WITHOUT_EXTERNAL_LIBS}
+        -DCMAKE_C_FLAGS=${FLAC_EXPORT_DEFINITION}
     OPTIONS_RELEASE
         -DBUILD_PROGRAMS=${BUILD_EXECUTABLES}
     OPTIONS_DEBUG
@@ -41,8 +45,7 @@ vcpkg_configure_cmake(
 )
 
 vcpkg_install_cmake()
-
-vcpkg_fixup_cmake_targets(CONFIG_PATH share/libsndfile)
+vcpkg_fixup_cmake_targets()
 
 # Fix applied for 6830c421899e32f8d413a903a21a9b6cf384d369
 file(READ "${CURRENT_PACKAGES_DIR}/share/libsndfile/LibSndFileTargets.cmake" _contents)

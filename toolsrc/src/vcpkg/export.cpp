@@ -1,19 +1,20 @@
 #include "pch.h"
 
+#include <vcpkg/base/stringliteral.h>
+#include <vcpkg/base/system.print.h>
+#include <vcpkg/base/system.process.h>
+#include <vcpkg/base/util.h>
 #include <vcpkg/commands.h>
 #include <vcpkg/dependencies.h>
+#include <vcpkg/export.chocolatey.h>
 #include <vcpkg/export.h>
 #include <vcpkg/export.ifw.h>
+#include <vcpkg/export.prefab.h>
 #include <vcpkg/help.h>
 #include <vcpkg/input.h>
 #include <vcpkg/install.h>
 #include <vcpkg/paragraphs.h>
 #include <vcpkg/vcpkglib.h>
-
-#include <vcpkg/base/stringliteral.h>
-#include <vcpkg/base/system.print.h>
-#include <vcpkg/base/system.process.h>
-#include <vcpkg/base/util.h>
 
 namespace vcpkg::Export
 {
@@ -23,7 +24,8 @@ namespace vcpkg::Export
     using Install::InstallDir;
 
     static std::string create_nuspec_file_contents(const std::string& raw_exported_dir,
-                                                   const std::string& targets_redirect_path,
+                                                   const fs::path& targets_redirect_path,
+                                                   const fs::path& props_redirect_path,
                                                    const std::string& nuget_id,
                                                    const std::string& nupkg_version)
     {
@@ -42,6 +44,7 @@ namespace vcpkg::Export
         <file src="@RAW_EXPORTED_DIR@\scripts\**" target="scripts" />
         <file src="@RAW_EXPORTED_DIR@\.vcpkg-root" target="" />
         <file src="@TARGETS_REDIRECT_PATH@" target="build\native\@NUGET_ID@.targets" />
+        <file src="@PROPS_REDIRECT_PATH@" target="build\native\@NUGET_ID@.props" />
     </files>
 </package>
 )";
@@ -50,8 +53,10 @@ namespace vcpkg::Export
         nuspec_file_content = Strings::replace_all(std::move(nuspec_file_content), "@VERSION@", nupkg_version);
         nuspec_file_content =
             Strings::replace_all(std::move(nuspec_file_content), "@RAW_EXPORTED_DIR@", raw_exported_dir);
-        nuspec_file_content =
-            Strings::replace_all(std::move(nuspec_file_content), "@TARGETS_REDIRECT_PATH@", targets_redirect_path);
+        nuspec_file_content = Strings::replace_all(
+            std::move(nuspec_file_content), "@TARGETS_REDIRECT_PATH@", targets_redirect_path.u8string());
+        nuspec_file_content = Strings::replace_all(
+            std::move(nuspec_file_content), "@PROPS_REDIRECT_PATH@", props_redirect_path.u8string());
         return nuspec_file_content;
     }
 
@@ -70,17 +75,6 @@ namespace vcpkg::Export
     {
         static constexpr std::array<ExportPlanType, 2> ORDER = {ExportPlanType::ALREADY_BUILT,
                                                                 ExportPlanType::NOT_BUILT};
-        static constexpr Build::BuildPackageOptions BUILD_OPTIONS = {
-            Build::UseHeadVersion::NO,
-            Build::AllowDownloads::YES,
-            Build::CleanBuildtrees::NO,
-            Build::CleanPackages::NO,
-            Build::CleanDownloads::NO,
-            Build::DownloadTool::BUILT_IN,
-            Build::BinaryCaching::NO,
-            Build::FailOnTombstone::NO,
-        };
-
         for (const ExportPlanType plan_type : ORDER)
         {
             const auto it = group_by_plan_type.find(plan_type);
@@ -92,7 +86,8 @@ namespace vcpkg::Export
             std::vector<const ExportPlanAction*> cont = it->second;
             std::sort(cont.begin(), cont.end(), &ExportPlanAction::compare_by_name);
             const std::string as_string = Strings::join("\n", cont, [](const ExportPlanAction* p) {
-                return Dependencies::to_output_string(p->request_type, p->spec.to_string(), BUILD_OPTIONS);
+                return Dependencies::to_output_string(
+                    p->request_type, p->spec.to_string(), vcpkg::Build::default_build_package_options);
             });
 
             switch (plan_type)
@@ -133,28 +128,34 @@ namespace vcpkg::Export
         Files::Filesystem& fs = paths.get_filesystem();
         const fs::path& nuget_exe = paths.get_tool_exe(Tools::NUGET);
 
-        // This file will be placed in "build\native" in the nuget package. Therefore, go up two dirs.
-        const std::string targets_redirect_content =
-            create_targets_redirect("../../scripts/buildsystems/msbuild/vcpkg.targets");
-        const fs::path targets_redirect = paths.buildsystems / "tmp" / "vcpkg.export.nuget.targets";
-
         std::error_code ec;
         fs.create_directories(paths.buildsystems / "tmp", ec);
 
-        fs.write_contents(targets_redirect, targets_redirect_content);
+        // This file will be placed in "build\native" in the nuget package. Therefore, go up two dirs.
+        const std::string targets_redirect_content =
+            create_targets_redirect("$(MSBuildThisFileDirectory)../../scripts/buildsystems/msbuild/vcpkg.targets");
+        const fs::path targets_redirect = paths.buildsystems / "tmp" / "vcpkg.export.nuget.targets";
+        fs.write_contents(targets_redirect, targets_redirect_content, VCPKG_LINE_INFO);
 
-        const std::string nuspec_file_content =
-            create_nuspec_file_contents(raw_exported_dir.string(), targets_redirect.string(), nuget_id, nuget_version);
+        // This file will be placed in "build\native" in the nuget package. Therefore, go up two dirs.
+        const std::string props_redirect_content =
+            create_targets_redirect("$(MSBuildThisFileDirectory)../../scripts/buildsystems/msbuild/vcpkg.props");
+        const fs::path props_redirect = paths.buildsystems / "tmp" / "vcpkg.export.nuget.props";
+        fs.write_contents(props_redirect, props_redirect_content, VCPKG_LINE_INFO);
+
+        const std::string nuspec_file_content = create_nuspec_file_contents(
+            raw_exported_dir.string(), targets_redirect, props_redirect, nuget_id, nuget_version);
         const fs::path nuspec_file_path = paths.buildsystems / "tmp" / "vcpkg.export.nuspec";
-        fs.write_contents(nuspec_file_path, nuspec_file_content);
+        fs.write_contents(nuspec_file_path, nuspec_file_content, VCPKG_LINE_INFO);
 
         // -NoDefaultExcludes is needed for ".vcpkg-root"
-        const auto cmd_line = Strings::format(R"("%s" pack -OutputDirectory "%s" "%s" -NoDefaultExcludes > nul)",
+        const auto cmd_line = Strings::format(R"("%s" pack -OutputDirectory "%s" "%s" -NoDefaultExcludes)",
                                               nuget_exe.u8string(),
                                               output_dir.u8string(),
                                               nuspec_file_path.u8string());
 
-        const int exit_code = System::cmd_execute_clean(cmd_line);
+        const int exit_code =
+            System::cmd_execute_and_capture_output(cmd_line, System::get_clean_environment()).exit_code;
         Checks::check_exit(VCPKG_LINE_INFO, exit_code == 0, "Error: NuGet package creation failed");
 
         const fs::path output_path = output_dir / (nuget_id + "." + nuget_version + ".nupkg");
@@ -228,24 +229,23 @@ namespace vcpkg::Export
     void export_integration_files(const fs::path& raw_exported_dir_path, const VcpkgPaths& paths)
     {
         const std::vector<fs::path> integration_files_relative_to_root = {
-            {".vcpkg-root"},
-            {fs::path {"scripts"} / "buildsystems" / "msbuild" / "applocal.ps1"},
-            {fs::path {"scripts"} / "buildsystems" / "msbuild" / "vcpkg.targets"},
-            {fs::path {"scripts"} / "buildsystems" / "vcpkg.cmake"},
-            {fs::path {"scripts"} / "cmake" / "vcpkg_get_windows_sdk.cmake"},
+            {fs::path{"scripts"} / "buildsystems" / "msbuild" / "applocal.ps1"},
+            {fs::path{"scripts"} / "buildsystems" / "msbuild" / "vcpkg.targets"},
+            {fs::path{"scripts"} / "buildsystems" / "msbuild" / "vcpkg.props"},
+            {fs::path{"scripts"} / "buildsystems" / "msbuild" / "vcpkg-general.xml"},
+            {fs::path{"scripts"} / "buildsystems" / "vcpkg.cmake"},
+            {fs::path{"scripts"} / "cmake" / "vcpkg_get_windows_sdk.cmake"},
         };
 
+        Files::Filesystem& fs = paths.get_filesystem();
         for (const fs::path& file : integration_files_relative_to_root)
         {
             const fs::path source = paths.root / file;
             fs::path destination = raw_exported_dir_path / file;
-            Files::Filesystem& fs = paths.get_filesystem();
-            std::error_code ec;
-            fs.create_directories(destination.parent_path(), ec);
-            Checks::check_exit(VCPKG_LINE_INFO, !ec);
-            fs.copy_file(source, destination, fs::copy_options::overwrite_existing, ec);
-            Checks::check_exit(VCPKG_LINE_INFO, !ec);
+            fs.create_directories(destination.parent_path(), ignore_errors);
+            fs.copy_file(source, destination, fs::copy_options::overwrite_existing, VCPKG_LINE_INFO);
         }
+        fs.write_contents(raw_exported_dir_path / fs::u8path(".vcpkg-root"), "", VCPKG_LINE_INFO);
     }
 
     struct ExportArguments
@@ -256,6 +256,9 @@ namespace vcpkg::Export
         bool ifw = false;
         bool zip = false;
         bool seven_zip = false;
+        bool chocolatey = false;
+        bool prefab = false;
+        bool all_installed = false;
 
         Optional<std::string> maybe_output;
 
@@ -263,6 +266,8 @@ namespace vcpkg::Export
         Optional<std::string> maybe_nuget_version;
 
         IFW::Options ifw_options;
+        Prefab::Options prefab_options;
+        Chocolatey::Options chocolatey_options;
         std::vector<PackageSpec> specs;
     };
 
@@ -280,17 +285,35 @@ namespace vcpkg::Export
     static constexpr StringLiteral OPTION_IFW_REPOSITORY_DIR_PATH = "--ifw-repository-directory-path";
     static constexpr StringLiteral OPTION_IFW_CONFIG_FILE_PATH = "--ifw-configuration-file-path";
     static constexpr StringLiteral OPTION_IFW_INSTALLER_FILE_PATH = "--ifw-installer-file-path";
+    static constexpr StringLiteral OPTION_CHOCOLATEY = "--x-chocolatey";
+    static constexpr StringLiteral OPTION_CHOCOLATEY_MAINTAINER = "--x-maintainer";
+    static constexpr StringLiteral OPTION_CHOCOLATEY_VERSION_SUFFIX = "--x-version-suffix";
+    static constexpr StringLiteral OPTION_ALL_INSTALLED = "--x-all-installed";
 
-    static constexpr std::array<CommandSwitch, 6> EXPORT_SWITCHES = {{
+    static constexpr StringLiteral OPTION_PREFAB = "--prefab";
+    static constexpr StringLiteral OPTION_PREFAB_GROUP_ID = "--prefab-group-id";
+    static constexpr StringLiteral OPTION_PREFAB_ARTIFACT_ID = "--prefab-artifact-id";
+    static constexpr StringLiteral OPTION_PREFAB_VERSION = "--prefab-version";
+    static constexpr StringLiteral OPTION_PREFAB_SDK_MIN_VERSION = "--prefab-min-sdk";
+    static constexpr StringLiteral OPTION_PREFAB_SDK_TARGET_VERSION = "--prefab-target-sdk";
+    static constexpr StringLiteral OPTION_PREFAB_ENABLE_MAVEN = "--prefab-maven";
+    static constexpr StringLiteral OPTION_PREFAB_ENABLE_DEBUG = "--prefab-debug";
+
+    static constexpr std::array<CommandSwitch, 11> EXPORT_SWITCHES = {{
         {OPTION_DRY_RUN, "Do not actually export"},
         {OPTION_RAW, "Export to an uncompressed directory"},
         {OPTION_NUGET, "Export a NuGet package"},
         {OPTION_IFW, "Export to an IFW-based installer"},
         {OPTION_ZIP, "Export to a zip file"},
         {OPTION_SEVEN_ZIP, "Export to a 7zip (.7z) file"},
+        {OPTION_CHOCOLATEY, "Export a Chocolatey package (experimental feature)"},
+        {OPTION_PREFAB, "Export to Prefab format"},
+        {OPTION_PREFAB_ENABLE_MAVEN, "Enable maven"},
+        {OPTION_PREFAB_ENABLE_DEBUG, "Enable prefab debug"},
+        {OPTION_ALL_INSTALLED, "Export all installed packages"},
     }};
 
-    static constexpr std::array<CommandSetting, 8> EXPORT_SETTINGS = {{
+    static constexpr std::array<CommandSetting, 15> EXPORT_SETTINGS = {{
         {OPTION_OUTPUT, "Specify the output name (used to construct filename)"},
         {OPTION_NUGET_ID, "Specify the id for the exported NuGet package (overrides --output)"},
         {OPTION_NUGET_VERSION, "Specify the version for the exported NuGet package"},
@@ -299,10 +322,19 @@ namespace vcpkg::Export
         {OPTION_IFW_REPOSITORY_DIR_PATH, "Specify the directory path for the exported repository"},
         {OPTION_IFW_CONFIG_FILE_PATH, "Specify the temporary file path for the installer configuration"},
         {OPTION_IFW_INSTALLER_FILE_PATH, "Specify the file path for the exported installer"},
+        {OPTION_CHOCOLATEY_MAINTAINER,
+         "Specify the maintainer for the exported Chocolatey package (experimental feature)"},
+        {OPTION_CHOCOLATEY_VERSION_SUFFIX,
+         "Specify the version suffix to add for the exported Chocolatey package (experimental feature)"},
+        {OPTION_PREFAB_GROUP_ID, "GroupId uniquely identifies your project according maven specifications"},
+        {OPTION_PREFAB_ARTIFACT_ID, "Artifact Id is the name of the project according maven specifications"},
+        {OPTION_PREFAB_VERSION, "Version is the name of the project according maven specifications"},
+        {OPTION_PREFAB_SDK_MIN_VERSION, "Android minimum supported sdk version"},
+        {OPTION_PREFAB_SDK_TARGET_VERSION, "Android target sdk version"},
     }};
 
     const CommandStructure COMMAND_STRUCTURE = {
-        Help::create_example_string("export zlib zlib:x64-windows boost --nuget"),
+        create_example_string("export zlib zlib:x64-windows boost --nuget"),
         0,
         SIZE_MAX,
         {EXPORT_SWITCHES, EXPORT_SETTINGS},
@@ -310,55 +342,82 @@ namespace vcpkg::Export
     };
 
     static ExportArguments handle_export_command_arguments(const VcpkgCmdArguments& args,
-                                                           const Triplet& default_triplet)
+                                                           Triplet default_triplet,
+                                                           const StatusParagraphs& status_db)
     {
         ExportArguments ret;
 
         const auto options = args.parse_arguments(COMMAND_STRUCTURE);
 
-        // input sanitization
-        ret.specs = Util::fmap(args.command_arguments, [&](auto&& arg) {
-            return Input::check_and_get_package_spec(std::string(arg), default_triplet, COMMAND_STRUCTURE.example_text);
-        });
         ret.dry_run = options.switches.find(OPTION_DRY_RUN) != options.switches.cend();
         ret.raw = options.switches.find(OPTION_RAW) != options.switches.cend();
         ret.nuget = options.switches.find(OPTION_NUGET) != options.switches.cend();
         ret.ifw = options.switches.find(OPTION_IFW) != options.switches.cend();
         ret.zip = options.switches.find(OPTION_ZIP) != options.switches.cend();
         ret.seven_zip = options.switches.find(OPTION_SEVEN_ZIP) != options.switches.cend();
-
+        ret.chocolatey = options.switches.find(OPTION_CHOCOLATEY) != options.switches.cend();
+        ret.prefab = options.switches.find(OPTION_PREFAB) != options.switches.cend();
+        ret.prefab_options.enable_maven = options.switches.find(OPTION_PREFAB_ENABLE_MAVEN) != options.switches.cend();
+        ret.prefab_options.enable_debug = options.switches.find(OPTION_PREFAB_ENABLE_DEBUG) != options.switches.cend();
         ret.maybe_output = maybe_lookup(options.settings, OPTION_OUTPUT);
+        ret.all_installed = options.switches.find(OPTION_ALL_INSTALLED) != options.switches.end();
 
-        if (!ret.raw && !ret.nuget && !ret.ifw && !ret.zip && !ret.seven_zip && !ret.dry_run)
+        if (ret.all_installed)
         {
-            System::print2(System::Color::error,
-                           "Must provide at least one export type: --raw --nuget --ifw --zip --7zip\n");
+            auto installed_ipv = get_installed_ports(status_db);
+            std::transform(installed_ipv.begin(),
+                           installed_ipv.end(),
+                           std::back_inserter(ret.specs),
+                           [](const auto& ipv) { return ipv.spec(); });
+        }
+        else
+        {
+            // input sanitization
+            ret.specs = Util::fmap(args.command_arguments, [&](auto&& arg) {
+                return Input::check_and_get_package_spec(
+                    std::string(arg), default_triplet, COMMAND_STRUCTURE.example_text);
+            });
+        }
+
+        if (!ret.raw && !ret.nuget && !ret.ifw && !ret.zip && !ret.seven_zip && !ret.dry_run && !ret.chocolatey &&
+            !ret.prefab)
+        {
+            System::print2(
+                System::Color::error,
+                "Must provide at least one export type: --raw --nuget --ifw --zip --7zip --chocolatey --prefab\n");
             System::print2(COMMAND_STRUCTURE.example_text);
             Checks::exit_fail(VCPKG_LINE_INFO);
         }
 
         struct OptionPair
         {
-            const std::string& name;
+            const StringLiteral& name;
             Optional<std::string>& out_opt;
         };
-        const auto options_implies =
-            [&](const std::string& main_opt_name, bool main_opt, Span<const OptionPair> implying_opts) {
-                if (main_opt)
-                {
-                    for (auto&& opt : implying_opts)
-                        opt.out_opt = maybe_lookup(options.settings, opt.name);
-                }
-                else
-                {
-                    for (auto&& opt : implying_opts)
-                        Checks::check_exit(VCPKG_LINE_INFO,
-                                           !maybe_lookup(options.settings, opt.name),
-                                           "%s is only valid with %s",
-                                           opt.name,
-                                           main_opt_name);
-                }
-            };
+        const auto options_implies = [&](const StringLiteral& main_opt_name,
+                                         bool is_main_opt,
+                                         const std::initializer_list<OptionPair>& implying_opts) {
+            if (is_main_opt)
+            {
+                for (auto&& opt : implying_opts)
+                    opt.out_opt = maybe_lookup(options.settings, opt.name);
+            }
+            else
+            {
+                for (auto&& opt : implying_opts)
+                    Checks::check_exit(VCPKG_LINE_INFO,
+                                       !maybe_lookup(options.settings, opt.name),
+                                       "%s is only valid with %s",
+                                       opt.name,
+                                       main_opt_name);
+            }
+        };
+
+#if defined(_MSC_VER) && _MSC_VER <= 1900
+// there's a bug in VS 2015 that causes a bunch of "unreferenced local variable" warnings
+#pragma warning(push)
+#pragma warning(disable : 4189)
+#endif
 
         options_implies(OPTION_NUGET,
                         ret.nuget,
@@ -376,6 +435,27 @@ namespace vcpkg::Export
                             {OPTION_IFW_CONFIG_FILE_PATH, ret.ifw_options.maybe_config_file_path},
                             {OPTION_IFW_INSTALLER_FILE_PATH, ret.ifw_options.maybe_installer_file_path},
                         });
+
+        options_implies(OPTION_PREFAB,
+                        ret.prefab,
+                        {
+                            {OPTION_PREFAB_ARTIFACT_ID, ret.prefab_options.maybe_artifact_id},
+                            {OPTION_PREFAB_GROUP_ID, ret.prefab_options.maybe_group_id},
+                            {OPTION_PREFAB_SDK_MIN_VERSION, ret.prefab_options.maybe_min_sdk},
+                            {OPTION_PREFAB_SDK_TARGET_VERSION, ret.prefab_options.maybe_target_sdk},
+                            {OPTION_PREFAB_VERSION, ret.prefab_options.maybe_version},
+                        });
+
+        options_implies(OPTION_CHOCOLATEY,
+                        ret.chocolatey,
+                        {
+                            {OPTION_CHOCOLATEY_MAINTAINER, ret.chocolatey_options.maybe_maintainer},
+                            {OPTION_CHOCOLATEY_VERSION_SUFFIX, ret.chocolatey_options.maybe_version_suffix},
+                        });
+
+#if defined(_MSC_VER) && _MSC_VER <= 1900
+#pragma warning(pop)
+#endif
         return ret;
     }
 
@@ -400,8 +480,10 @@ namespace vcpkg::Export
         Files::Filesystem& fs = paths.get_filesystem();
         const fs::path export_to_path = paths.root;
         const fs::path raw_exported_dir_path = export_to_path / export_id;
+        fs.remove_all(raw_exported_dir_path, VCPKG_LINE_INFO);
+
+        // TODO: error handling
         std::error_code ec;
-        fs.remove_all(raw_exported_dir_path, ec);
         fs.create_directory(raw_exported_dir_path, ec);
 
         // execute the plan
@@ -422,7 +504,18 @@ namespace vcpkg::Export
                 action.spec.triplet().to_string(),
                 raw_exported_dir_path / "installed" / "vcpkg" / "info" / (binary_paragraph.fullstem() + ".list"));
 
-            Install::install_files_and_write_listfile(paths.get_filesystem(), paths.package_dir(action.spec), dirs);
+            auto lines = fs.read_lines(paths.listfile_path(binary_paragraph)).value_or_exit(VCPKG_LINE_INFO);
+            std::vector<fs::path> files;
+            for (auto&& suffix : lines)
+            {
+                if (suffix.empty()) continue;
+                if (suffix.back() == '/') suffix.pop_back();
+                if (suffix == action.spec.triplet().to_string()) continue;
+                files.push_back(paths.installed / fs::u8path(suffix));
+            }
+
+            Install::install_files_and_write_listfile(
+                fs, paths.installed / action.spec.triplet().to_string(), files, dirs);
         }
 
         // Copy files needed for integration
@@ -476,19 +569,28 @@ With a project open, go to Tools->NuGet Package Manager->Package Manager Console
 
         if (!opts.raw)
         {
-            fs.remove_all(raw_exported_dir_path, ec);
+            fs.remove_all(raw_exported_dir_path, VCPKG_LINE_INFO);
         }
     }
 
-    void perform_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths, const Triplet& default_triplet)
+    void perform_and_exit(const VcpkgCmdArguments& args, const VcpkgPaths& paths, Triplet default_triplet)
     {
-        const auto opts = handle_export_command_arguments(args, default_triplet);
+        if (paths.manifest_mode_enabled())
+        {
+            Checks::exit_with_message(
+                VCPKG_LINE_INFO,
+                "vcpkg export does not support manifest mode, in order to allow for future design considerations. You "
+                "may use export in classic mode by running vcpkg outside of a manifest-based project.");
+        }
+        const StatusParagraphs status_db = database_load_check(paths);
+        const auto opts = handle_export_command_arguments(args, default_triplet, status_db);
         for (auto&& spec : opts.specs)
             Input::check_triplet(spec.triplet(), paths);
 
+        // Load ports from ports dirs
+        PortFileProvider::PathsPortFileProvider provider(paths, args.overlay_ports);
+
         // create the plan
-        const StatusParagraphs status_db = database_load_check(paths);
-        Dependencies::PathsPortFileProvider provider(paths);
         std::vector<ExportPlanAction> export_plan = Dependencies::create_export_plan(opts.specs, status_db);
         Checks::check_exit(VCPKG_LINE_INFO, !export_plan.empty(), "Export plan cannot be empty");
 
@@ -542,6 +644,16 @@ With a project open, go to Tools->NuGet Package Manager->Package Manager Console
             IFW::do_export(export_plan, export_id, opts.ifw_options, paths);
 
             print_next_step_info("@RootDir@/src/vcpkg");
+        }
+
+        if (opts.chocolatey)
+        {
+            Chocolatey::do_export(export_plan, paths, opts.chocolatey_options);
+        }
+
+        if (opts.prefab)
+        {
+            Prefab::do_export(export_plan, paths, opts.prefab_options, default_triplet);
         }
 
         Checks::exit_success(VCPKG_LINE_INFO);

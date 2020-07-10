@@ -9,7 +9,7 @@ $g_is_debug = $g_install_root -match '(.*\\)?debug(\\)?$'
 # Ensure we create the copied files log, even if we don't end up copying any files
 if ($copiedFilesLog)
 {
-    Set-Content -Path $copiedFilesLog -Value "" -Encoding Ascii
+    Set-Content -Path $copiedFilesLog -Value "" -Encoding UTF8
 }
 
 # Note: this function signature is depended upon by the qtdeploy.ps1 script introduced in 5.7.1-7
@@ -28,8 +28,8 @@ function deployBinary([string]$targetBinaryDir, [string]$SourceDir, [string]$tar
         Write-Verbose "  ${targetBinaryName}: Copying $SourceDir\$targetBinaryName"
         Copy-Item "$SourceDir\$targetBinaryName" $targetBinaryDir
     }
-    if ($copiedFilesLog) { Add-Content $copiedFilesLog "$targetBinaryDir\$targetBinaryName" }
-    if ($tlogFile) { Add-Content $tlogFile "$targetBinaryDir\$targetBinaryName" }
+    if ($copiedFilesLog) { Add-Content $copiedFilesLog "$targetBinaryDir\$targetBinaryName" -Encoding UTF8 }
+    if ($tlogFile) { Add-Content $tlogFile "$targetBinaryDir\$targetBinaryName" -Encoding Unicode }
 }
 
 
@@ -78,6 +78,7 @@ function resolve([string]$targetBinary) {
                     deployPluginsIfMagnum $targetBinaryDir "$g_install_root\bin\magnum" "$_"
                 }
             }
+            if (Test-Path function:\deployAzureKinectSensorSDK) { deployAzureKinectSensorSDK $targetBinaryDir "$g_install_root" "$_" }
             resolve "$baseTargetBinaryDir\$_"
         } elseif (Test-Path "$targetBinaryDir\$_") {
             Write-Verbose "  ${_}: $_ not found in vcpkg; locally deployed"
@@ -105,6 +106,11 @@ if (Test-Path "$g_install_root\bin\magnum\magnumdeploy.ps1") {
     . "$g_install_root\bin\magnum\magnumdeploy.ps1"
 } elseif (Test-Path "$g_install_root\bin\magnum-d\magnumdeploy.ps1") {
     . "$g_install_root\bin\magnum-d\magnumdeploy.ps1"
+}
+
+# Note: This is a hack to make Azure Kinect Sensor SDK work.
+if (Test-Path "$g_install_root\tools\azure-kinect-sensor-sdk\k4adeploy.ps1") {
+    . "$g_install_root\tools\azure-kinect-sensor-sdk\k4adeploy.ps1"
 }
 
 resolve($targetBinary)

@@ -5,6 +5,7 @@
 ## ## Usage
 ## ```cmake
 ## vcpkg_extract_source_archive_ex(
+##     SKIP_PATCH_CHECK
 ##     OUT_SOURCE_PATH <SOURCE_PATH>
 ##     ARCHIVE <${ARCHIVE}>
 ##     [REF <1.0.0>]
@@ -14,6 +15,9 @@
 ## )
 ## ```
 ## ## Parameters
+## ### SKIP_PATCH_CHECK
+## If this option is set the failure to apply a patch is ignored.
+##
 ## ### OUT_SOURCE_PATH
 ## Specifies the out-variable that will contain the extracted location.
 ##
@@ -25,7 +29,7 @@
 ## This is usually obtained from calling [`vcpkg_download_distfile`](vcpkg_download_distfile.md).
 ##
 ## ### REF
-## A friendly name that will be used instead of the filename of the archive.
+## A friendly name that will be used instead of the filename of the archive.  If more than 10 characters it will be truncated.
 ##
 ## By convention, this is set to the version number or tag fetched
 ##
@@ -51,7 +55,13 @@ include(vcpkg_apply_patches)
 include(vcpkg_extract_source_archive)
 
 function(vcpkg_extract_source_archive_ex)
-    cmake_parse_arguments(_vesae "NO_REMOVE_ONE_LEVEL" "OUT_SOURCE_PATH;ARCHIVE;REF;WORKING_DIRECTORY" "PATCHES" ${ARGN})
+    cmake_parse_arguments(
+        _vesae
+        "NO_REMOVE_ONE_LEVEL;SKIP_PATCH_CHECK"
+        "OUT_SOURCE_PATH;ARCHIVE;REF;WORKING_DIRECTORY"
+        "PATCHES"
+        ${ARGN}
+    )
 
     if(NOT _vesae_ARCHIVE)
         message(FATAL_ERROR "Must specify ARCHIVE parameter to vcpkg_extract_source_archive_ex()")
@@ -91,9 +101,16 @@ function(vcpkg_extract_source_archive_ex)
     string(SHA512 PATCHSET_HASH ${PATCHSET_HASH})
     string(SUBSTRING ${PATCHSET_HASH} 0 10 PATCHSET_HASH)
     set(SOURCE_PATH "${_vesae_WORKING_DIRECTORY}/${SHORTENED_SANITIZED_REF}-${PATCHSET_HASH}")
+    if (NOT _VCPKG_EDITABLE)
+        string(APPEND SOURCE_PATH ".clean")
+        if(EXISTS ${SOURCE_PATH})
+            message(STATUS "Cleaning sources at ${SOURCE_PATH}. Pass --editable to vcpkg to reuse sources.")
+            file(REMOVE_RECURSE ${SOURCE_PATH})
+        endif()
+    endif()
 
     if(NOT EXISTS ${SOURCE_PATH})
-        set(TEMP_DIR "${_vesae_WORKING_DIRECTORY}/TEMP")
+        set(TEMP_DIR "${_vesae_WORKING_DIRECTORY}/${SHORTENED_SANITIZED_REF}-${PATCHSET_HASH}.tmp")
         file(REMOVE_RECURSE ${TEMP_DIR})
         vcpkg_extract_source_archive("${_vesae_ARCHIVE}" "${TEMP_DIR}")
 
@@ -115,7 +132,14 @@ function(vcpkg_extract_source_archive_ex)
             endif()
         endif()
 
+        if (_vesae_SKIP_PATCH_CHECK)
+            set (QUIET QUIET)
+        else()
+            set (QUIET)
+        endif()
+
         vcpkg_apply_patches(
+            ${QUIET}
             SOURCE_PATH ${TEMP_SOURCE_PATH}
             PATCHES ${_vesae_PATCHES}
         )

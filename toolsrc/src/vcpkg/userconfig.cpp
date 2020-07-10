@@ -2,47 +2,23 @@
 
 #include <vcpkg/base/files.h>
 #include <vcpkg/base/lazy.h>
+#include <vcpkg/base/system.h>
 #include <vcpkg/paragraphs.h>
 #include <vcpkg/userconfig.h>
-
-#if defined(_WIN32)
-namespace
-{
-    static vcpkg::Lazy<fs::path> s_localappdata;
-
-    static const fs::path& get_localappdata()
-    {
-        return s_localappdata.get_lazy([]() {
-            fs::path localappdata;
-            {
-                // Config path in AppDataLocal
-                wchar_t* localappdatapath = nullptr;
-                if (S_OK != SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &localappdatapath)) __fastfail(1);
-                localappdata = localappdatapath;
-                CoTaskMemFree(localappdatapath);
-            }
-            return localappdata;
-        });
-    }
-}
-#endif
 
 namespace vcpkg
 {
     fs::path get_user_dir()
     {
 #if defined(_WIN32)
-        return get_localappdata() / "vcpkg";
+        return System::get_appdata_local().value_or_exit(VCPKG_LINE_INFO) / "vcpkg";
 #else
         auto maybe_home = System::get_environment_variable("HOME");
         return fs::path(maybe_home.value_or("/var")) / ".vcpkg";
 #endif
     }
 
-    static fs::path get_config_path()
-    {
-        return get_user_dir() / "config";
-    }
+    static fs::path get_config_path() { return get_user_dir() / "config"; }
 
     UserConfig UserConfig::try_read_data(const Files::Filesystem& fs)
     {
@@ -54,7 +30,7 @@ namespace vcpkg
             {
                 const auto& pghs = *p_pghs;
 
-                std::unordered_map<std::string, std::string> keys;
+                Parse::Paragraph keys;
                 if (pghs.size() > 0) keys = pghs[0];
 
                 for (size_t x = 1; x < pghs.size(); ++x)
@@ -63,10 +39,10 @@ namespace vcpkg
                         keys.insert(p);
                 }
 
-                ret.user_id = keys["User-Id"];
-                ret.user_time = keys["User-Since"];
-                ret.user_mac = keys["Mac-Hash"];
-                ret.last_completed_survey = keys["Survey-Completed"];
+                ret.user_id = keys["User-Id"].first;
+                ret.user_time = keys["User-Since"].first;
+                ret.user_mac = keys["Mac-Hash"].first;
+                ret.last_completed_survey = keys["Survey-Completed"].first;
             }
         }
         catch (...)

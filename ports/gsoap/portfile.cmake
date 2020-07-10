@@ -1,32 +1,20 @@
-include(vcpkg_common_functions)
-set(GSOAP_VERSION 2.8)
-set(GSOAP_SUB_VERSION .82)
-set(SOURCE_PATH ${CURRENT_BUILDTREES_DIR}/src/gsoap-${GSOAP_VERSION})
+vcpkg_fail_port_install(ON_TARGET "Linux" "OSX" "UWP" ON_ARCH "arm" "arm64")
 
-vcpkg_download_distfile(ARCHIVE
-    URLS "https://ayera.dl.sourceforge.net/project/gsoap2/gsoap-${GSOAP_VERSION}/gsoap_${GSOAP_VERSION}${GSOAP_SUB_VERSION}.zip"
-    FILENAME "gsoap_${GSOAP_VERSION}${GSOAP_SUB_VERSION}.zip"
-    SHA512 daf6a1870fe43beb20d0faf646b171c92629885708baabea5bbce79fa5a8030f014dbe5c0bf4024031df993dd3ed3a90449db813946cfdfa9c12318096b57eec
-)
-
-vcpkg_extract_source_archive_ex(
+vcpkg_from_sourceforge(
     OUT_SOURCE_PATH SOURCE_PATH
-    ARCHIVE ${ARCHIVE}
-    PATCHES
-       "${CMAKE_CURRENT_LIST_DIR}/fix-build-in-windows.patch"
+    REPO gsoap2
+    REF gsoap-2.8
+    FILENAME "gsoap_2.8.102.zip"
+    SHA512 3cff65605b15f820c9d56e32575231fb6fb89927bafc1db85ac1f879acd8496d6f38b558e994d17cce475beae0976d5fafcff7f22b28cdfbec8b7ec4b08bcbe7
+    PATCHES fix-build-in-windows.patch
 )
 
-if (VCPKG_TARGET_ARCHITECTURE STREQUAL "x86")
-    set(BUILD_ARCH "Win32")
-else()
-    message("gsoap only supported Win32")
-    set(BUILD_ARCH "Win32")
-endif()
+set(BUILD_ARCH "Win32")
 
 # Handle binary files and includes
 file(MAKE_DIRECTORY ${CURRENT_PACKAGES_DIR}/tools/gsoap ${CURRENT_PACKAGES_DIR}/debug/tools)
 
-if (WIN32)
+if (NOT VCPKG_CMAKE_SYSTEM_NAME OR VCPKG_CMAKE_SYSTEM_NAME STREQUAL "WindowsStore")
     vcpkg_build_msbuild(
         USE_VCPKG_INTEGRATION
         PROJECT_PATH ${SOURCE_PATH}/gsoap/VisualStudio2005/soapcpp2/soapcpp2.sln
@@ -39,7 +27,7 @@ if (WIN32)
         PLATFORM ${BUILD_ARCH}
         TARGET Build
     )
-    
+
     file(COPY ${SOURCE_PATH}/gsoap/VisualStudio2005/soapcpp2/release/soapcpp2.exe DESTINATION ${CURRENT_PACKAGES_DIR}/tools/gsoap/)
     file(COPY ${SOURCE_PATH}/gsoap/VisualStudio2005/wsdl2h/release/wsdl2h.exe DESTINATION ${CURRENT_PACKAGES_DIR}/tools/gsoap/)
     file(COPY ${SOURCE_PATH}/gsoap/VisualStudio2005/soapcpp2/debug/soapcpp2.exe DESTINATION ${CURRENT_PACKAGES_DIR}/debug/tools/gsoap/)
@@ -48,20 +36,22 @@ else()
     message(FATAL_ERROR "Sorry but gsoap only can be build in Windows temporary")
 endif()
 
-    
+
 file(MAKE_DIRECTORY ${CURRENT_PACKAGES_DIR}/include)
 file(COPY ${SOURCE_PATH}/gsoap/stdsoap2.h ${SOURCE_PATH}/gsoap/stdsoap2.c ${SOURCE_PATH}/gsoap/stdsoap2.cpp ${SOURCE_PATH}/gsoap/dom.c ${SOURCE_PATH}/gsoap/dom.cpp DESTINATION ${CURRENT_PACKAGES_DIR}/include)
 
 # Handle import files
-file(COPY ${SOURCE_PATH}/gsoap/import DESTINATION ${CURRENT_PACKAGES_DIR}/share/gsoap)
+file(COPY ${SOURCE_PATH}/gsoap/import DESTINATION ${CURRENT_PACKAGES_DIR}/share/${PORT})
 
 # Handle plugin files
-file(COPY ${SOURCE_PATH}/gsoap/plugin DESTINATION ${CURRENT_PACKAGES_DIR}/share/gsoap)
+file(COPY ${SOURCE_PATH}/gsoap/plugin DESTINATION ${CURRENT_PACKAGES_DIR}/share/${PORT})
+
+# Cleanup surplus empty directory
+file(REMOVE_RECURSE "${CURRENT_PACKAGES_DIR}/share/gsoap/plugin/.deps")    
 
 # Handle copyright
-file(COPY ${SOURCE_PATH}/LICENSE.txt ${SOURCE_PATH}/INSTALL.txt ${SOURCE_PATH}/README.txt DESTINATION ${CURRENT_PACKAGES_DIR}/share/gsoap)
-file(RENAME ${CURRENT_PACKAGES_DIR}/share/gsoap/LICENSE.txt ${CURRENT_PACKAGES_DIR}/share/gsoap/copyright)
-file(RENAME ${CURRENT_PACKAGES_DIR}/share/gsoap/INSTALL.txt ${CURRENT_PACKAGES_DIR}/share/gsoap/install)
-file(RENAME ${CURRENT_PACKAGES_DIR}/share/gsoap/README.txt ${CURRENT_PACKAGES_DIR}/share/gsoap/readme) 
+file(INSTALL ${SOURCE_PATH}/LICENSE.txt DESTINATION ${CURRENT_PACKAGES_DIR}/share/${PORT} RENAME copyright)
+file(INSTALL ${SOURCE_PATH}/INSTALL.txt DESTINATION ${CURRENT_PACKAGES_DIR}/share/${PORT} RENAME install)
+file(INSTALL ${SOURCE_PATH}/README.txt DESTINATION ${CURRENT_PACKAGES_DIR}/share/${PORT} RENAME readme)
 
 vcpkg_copy_pdbs()

@@ -1,9 +1,6 @@
 #include "pch.h"
 
 #include <vcpkg/archives.h>
-#include <vcpkg/tools.h>
-#include <vcpkg/vcpkgpaths.h>
-
 #include <vcpkg/base/checks.h>
 #include <vcpkg/base/downloads.h>
 #include <vcpkg/base/files.h>
@@ -13,6 +10,8 @@
 #include <vcpkg/base/system.print.h>
 #include <vcpkg/base/system.process.h>
 #include <vcpkg/base/util.h>
+#include <vcpkg/tools.h>
+#include <vcpkg/vcpkgpaths.h>
 
 namespace vcpkg
 {
@@ -62,7 +61,7 @@ namespace vcpkg
 #if defined(_WIN32) || defined(__APPLE__) || defined(__linux__) || defined(__FreeBSD__)
         static const std::string XML_VERSION = "2";
         static const fs::path XML_PATH = paths.scripts / "vcpkgTools.xml";
-        static const std::regex XML_VERSION_REGEX {R"###(<tools[\s]+version="([^"]+)">)###"};
+        static const std::regex XML_VERSION_REGEX{R"###(<tools[\s]+version="([^"]+)">)###"};
         static const std::string XML = paths.get_filesystem().read_contents(XML_PATH).value_or_exit(VCPKG_LINE_INFO);
         std::smatch match_xml_version;
         const bool has_xml_version = std::regex_search(XML.cbegin(), XML.cend(), match_xml_version, XML_VERSION_REGEX);
@@ -78,7 +77,7 @@ namespace vcpkg
                            XML_VERSION,
                            match_xml_version[1]);
 
-        const std::regex tool_regex {Strings::format(R"###(<tool[\s]+name="%s"[\s]+os="%s">)###", tool, OS_STRING)};
+        const std::regex tool_regex{Strings::format(R"###(<tool[\s]+name="%s"[\s]+os="%s">)###", tool, OS_STRING)};
         std::smatch match_tool_entry;
         const bool has_tool_entry = std::regex_search(XML.cbegin(), XML.cend(), match_tool_entry, tool_regex);
         if (!has_tool_entry)
@@ -108,14 +107,17 @@ namespace vcpkg
         const std::string tool_dir_name = Strings::format("%s-%s-%s", tool, version_as_string, OS_STRING);
         const fs::path tool_dir_path = paths.tools / tool_dir_name;
         const fs::path exe_path = tool_dir_path / exe_relative_path;
+        fs::path download_path;
+        if (auto a = archive_name.get())
+        {
+            download_path = paths.downloads / fs::u8path(a->to_string());
+        }
+        else
+        {
+            download_path = paths.downloads / fs::u8path(Strings::concat(sha512.substr(0, 8), '-', exe_relative_path));
+        }
 
-        return ToolData {*version.get(),
-                         exe_path,
-                         url,
-                         paths.downloads / archive_name.value_or(exe_relative_path).to_string(),
-                         archive_name.has_value(),
-                         tool_dir_path,
-                         sha512};
+        return ToolData{*version.get(), exe_path, url, download_path, archive_name.has_value(), tool_dir_path, sha512};
 #endif
     }
 
@@ -131,19 +133,23 @@ namespace vcpkg
         virtual const std::string& exe_stem() const = 0;
         virtual std::array<int, 3> default_min_version() const = 0;
 
-        virtual void add_special_paths(std::vector<fs::path>& out_candidate_paths) const {}
-        virtual Optional<std::string> get_version(const fs::path& path_to_exe) const = 0;
+        virtual void add_special_paths(std::vector<fs::path>& out_candidate_paths) const
+        {
+            Util::unused(out_candidate_paths);
+        }
+        virtual Optional<std::string> get_version(const VcpkgPaths& paths, const fs::path& path_to_exe) const = 0;
     };
 
-    static Optional<PathAndVersion> find_first_with_sufficient_version(const Files::Filesystem& fs,
+    static Optional<PathAndVersion> find_first_with_sufficient_version(const VcpkgPaths& paths,
                                                                        const ToolProvider& tool_provider,
                                                                        const std::vector<fs::path>& candidates,
                                                                        const std::array<int, 3>& expected_version)
     {
+        const auto& fs = paths.get_filesystem();
         for (auto&& candidate : candidates)
         {
             if (!fs.exists(candidate)) continue;
-            auto maybe_version = tool_provider.get_version(candidate);
+            auto maybe_version = tool_provider.get_version(paths, candidate);
             const auto version = maybe_version.get();
             if (!version) continue;
             const auto parsed_version = parse_version_string(*version);
@@ -156,7 +162,7 @@ namespace vcpkg
                  actual_version[2] >= expected_version[2]);
             if (!version_acceptable) continue;
 
-            return PathAndVersion {candidate, *version};
+            return PathAndVersion{candidate, *version};
         }
 
         return nullopt;
@@ -215,7 +221,8 @@ namespace vcpkg
                                      const ToolData& tool_data)
     {
         const auto downloaded_path = fetch_tool(paths, tool_provider.tool_data_name(), tool_data);
-        const auto downloaded_version = tool_provider.get_version(downloaded_path).value_or_exit(VCPKG_LINE_INFO);
+        const auto downloaded_version =
+            tool_provider.get_version(paths, downloaded_path).value_or_exit(VCPKG_LINE_INFO);
         return {downloaded_path, downloaded_version};
     }
 
@@ -242,7 +249,7 @@ namespace vcpkg
 
         tool.add_special_paths(candidate_paths);
 
-        const auto maybe_path = find_first_with_sufficient_version(fs, tool, candidate_paths, min_version);
+        const auto maybe_path = find_first_with_sufficient_version(paths, tool, candidate_paths, min_version);
         if (const auto p = maybe_path.get())
         {
             return *p;
@@ -261,7 +268,7 @@ namespace vcpkg
 
         virtual const std::string& tool_data_name() const override { return m_exe; }
         virtual const std::string& exe_stem() const override { return m_exe; }
-        virtual std::array<int, 3> default_min_version() const override { return {3, 5, 1}; }
+        virtual std::array<int, 3> default_min_version() const override { return {3, 17, 1}; }
 
         virtual void add_special_paths(std::vector<fs::path>& out_candidate_paths) const override
         {
@@ -271,9 +278,12 @@ namespace vcpkg
             const auto& program_files_32_bit = System::get_program_files_32_bit();
             if (const auto pf = program_files_32_bit.get())
                 out_candidate_paths.push_back(*pf / "CMake" / "bin" / "cmake.exe");
+#else
+            // TODO: figure out if this should do anything on non-Windows
+            Util::unused(out_candidate_paths);
 #endif
         }
-        virtual Optional<std::string> get_version(const fs::path& path_to_exe) const override
+        virtual Optional<std::string> get_version(const VcpkgPaths&, const fs::path& path_to_exe) const override
         {
             const std::string cmd = Strings::format(R"("%s" --version)", path_to_exe.u8string());
             const auto rc = System::cmd_execute_and_capture_output(cmd);
@@ -291,20 +301,6 @@ CMake suite maintained and supported by Kitware (kitware.com/cmake).
         }
     };
 
-    static fs::path get_7za_path(const VcpkgPaths& paths)
-    {
-#if defined(_WIN32)
-        static const ToolData TOOL_DATA = parse_tool_data_from_xml(paths, "7zip").value_or_exit(VCPKG_LINE_INFO);
-        if (!paths.get_filesystem().exists(TOOL_DATA.exe_path))
-        {
-            return fetch_tool(paths, "7zip", TOOL_DATA);
-        }
-        return TOOL_DATA.exe_path;
-#else
-        Checks::exit_with_message(VCPKG_LINE_INFO, "Cannot download 7zip for non-Windows platforms.");
-#endif
-    }
-
     struct NinjaProvider : ToolProvider
     {
         std::string m_exe = "ninja";
@@ -313,7 +309,7 @@ CMake suite maintained and supported by Kitware (kitware.com/cmake).
         virtual const std::string& exe_stem() const override { return m_exe; }
         virtual std::array<int, 3> default_min_version() const override { return {3, 5, 1}; }
 
-        virtual Optional<std::string> get_version(const fs::path& path_to_exe) const override
+        virtual Optional<std::string> get_version(const VcpkgPaths&, const fs::path& path_to_exe) const override
         {
             const std::string cmd = Strings::format(R"("%s" --version)", path_to_exe.u8string());
             const auto rc = System::cmd_execute_and_capture_output(cmd);
@@ -337,10 +333,16 @@ CMake suite maintained and supported by Kitware (kitware.com/cmake).
         virtual const std::string& exe_stem() const override { return m_exe; }
         virtual std::array<int, 3> default_min_version() const override { return {4, 6, 2}; }
 
-        virtual Optional<std::string> get_version(const fs::path& path_to_exe) const override
+        virtual Optional<std::string> get_version(const VcpkgPaths& paths, const fs::path& path_to_exe) const override
         {
-            const std::string cmd = Strings::format(R"("%s")", path_to_exe.u8string());
-            const auto rc = System::cmd_execute_and_capture_output(cmd);
+            System::CmdLineBuilder cmd;
+#ifndef _WIN32
+            cmd.path_arg(paths.get_tool_exe(Tools::MONO));
+#else
+            Util::unused(paths);
+#endif
+            cmd.path_arg(path_to_exe);
+            const auto rc = System::cmd_execute_and_capture_output(cmd.extract());
             if (rc.exit_code != 0)
             {
                 return nullopt;
@@ -373,10 +375,13 @@ Type 'NuGet help <command>' for help on a specific command.
             const auto& program_files_32_bit = System::get_program_files_32_bit();
             if (const auto pf = program_files_32_bit.get())
                 out_candidate_paths.push_back(*pf / "git" / "cmd" / "git.exe");
+#else
+            // TODO: figure out if this should do anything on non-windows
+            Util::unused(out_candidate_paths);
 #endif
         }
 
-        virtual Optional<std::string> get_version(const fs::path& path_to_exe) const override
+        virtual Optional<std::string> get_version(const VcpkgPaths&, const fs::path& path_to_exe) const override
         {
             const std::string cmd = Strings::format(R"("%s" --version)", path_to_exe.u8string());
             const auto rc = System::cmd_execute_and_capture_output(cmd);
@@ -395,9 +400,36 @@ git version 2.17.1.windows.2
         }
     };
 
+    struct MonoProvider : ToolProvider
+    {
+        std::string m_exe = "mono";
+
+        virtual const std::string& tool_data_name() const override { return m_exe; }
+        virtual const std::string& exe_stem() const override { return m_exe; }
+        virtual std::array<int, 3> default_min_version() const override { return {0, 0, 0}; }
+
+        virtual Optional<std::string> get_version(const VcpkgPaths&, const fs::path& path_to_exe) const override
+        {
+            const auto rc = System::cmd_execute_and_capture_output(
+                System::CmdLineBuilder().path_arg(path_to_exe).string_arg("--version").extract());
+            if (rc.exit_code != 0)
+            {
+                return nullopt;
+            }
+
+            /* Sample output:
+Mono JIT compiler version 6.8.0.105 (Debian 6.8.0.105+dfsg-2 Wed Feb 26 23:23:50 UTC 2020)
+                */
+            const auto idx = rc.output.find("Mono JIT compiler version ");
+            Checks::check_exit(
+                VCPKG_LINE_INFO, idx != std::string::npos, "Unexpected format of mono version string: %s", rc.output);
+            return rc.output.substr(idx);
+        }
+    };
+
     struct IfwInstallerBaseProvider : ToolProvider
     {
-        std::string m_exe = "";
+        std::string m_exe;
         std::string m_toolname = "installerbase";
 
         virtual const std::string& tool_data_name() const override { return m_toolname; }
@@ -406,6 +438,7 @@ git version 2.17.1.windows.2
 
         virtual void add_special_paths(std::vector<fs::path>& out_candidate_paths) const override
         {
+            Util::unused(out_candidate_paths);
             // TODO: Uncomment later
             // const std::vector<fs::path> from_path = Files::find_from_PATH("installerbase");
             // candidate_paths.insert(candidate_paths.end(), from_path.cbegin(), from_path.cend());
@@ -415,7 +448,7 @@ git version 2.17.1.windows.2
             // "Qt" / "QtIFW-3.1.0" / "bin" / "installerbase.exe");
         }
 
-        virtual Optional<std::string> get_version(const fs::path& path_to_exe) const override
+        virtual Optional<std::string> get_version(const VcpkgPaths&, const fs::path& path_to_exe) const override
         {
             const std::string cmd = Strings::format(R"("%s" --framework-version)", path_to_exe.u8string());
             const auto rc = System::cmd_execute_and_capture_output(cmd);
@@ -439,31 +472,21 @@ git version 2.17.1.windows.2
         virtual const fs::path& get_tool_path(const VcpkgPaths& paths, const std::string& tool) const override
         {
             return path_only_cache.get_lazy(tool, [&]() {
-                // First deal with specially handled tools.
-                // For these we may look in locations like Program Files, the PATH etc as well as the auto-downloaded
-                // location.
-                if (tool == Tools::SEVEN_ZIP) return get_7za_path(paths);
-                if (tool == Tools::CMAKE || tool == Tools::GIT || tool == Tools::NINJA || tool == Tools::NUGET ||
-                    tool == Tools::IFW_INSTALLER_BASE)
-                    return get_tool_pathversion(paths, tool).path;
                 if (tool == Tools::IFW_BINARYCREATOR)
                     return get_tool_path(paths, Tools::IFW_INSTALLER_BASE).parent_path() / "binarycreator.exe";
                 if (tool == Tools::IFW_REPOGEN)
                     return get_tool_path(paths, Tools::IFW_INSTALLER_BASE).parent_path() / "repogen.exe";
 
-                // For other tools, we simply always auto-download them.
-                const ToolData tool_data = parse_tool_data_from_xml(paths, tool).value_or_exit(VCPKG_LINE_INFO);
-                if (paths.get_filesystem().exists(tool_data.exe_path))
-                {
-                    return tool_data.exe_path;
-                }
-                return fetch_tool(paths, tool, tool_data);
+                return get_tool_pathversion(paths, tool).path;
             });
         }
 
         const PathAndVersion& get_tool_pathversion(const VcpkgPaths& paths, const std::string& tool) const
         {
             return path_version_cache.get_lazy(tool, [&]() -> PathAndVersion {
+                // First deal with specially handled tools.
+                // For these we may look in locations like Program Files, the PATH etc as well as the auto-downloaded
+                // location.
                 if (tool == Tools::CMAKE)
                 {
                     if (System::get_environment_variable("VCPKG_FORCE_SYSTEM_BINARIES").has_value())
@@ -490,8 +513,20 @@ git version 2.17.1.windows.2
                 }
                 if (tool == Tools::NUGET) return get_path(paths, NuGetProvider());
                 if (tool == Tools::IFW_INSTALLER_BASE) return get_path(paths, IfwInstallerBaseProvider());
+                if (tool == Tools::MONO) return get_path(paths, MonoProvider());
 
-                Checks::exit_with_message(VCPKG_LINE_INFO, "Finding version for %s is not implemented yet.", tool);
+                // For other tools, we simply always auto-download them.
+                auto maybe_tool_data = parse_tool_data_from_xml(paths, tool);
+                if (auto p_tool_data = maybe_tool_data.get())
+                {
+                    if (paths.get_filesystem().exists(p_tool_data->exe_path))
+                    {
+                        return {p_tool_data->exe_path, p_tool_data->sha512};
+                    }
+                    return {fetch_tool(paths, tool, *p_tool_data), p_tool_data->sha512};
+                }
+
+                Checks::exit_with_message(VCPKG_LINE_INFO, "Unknown or unavailable tool: %s", tool);
             });
         }
 

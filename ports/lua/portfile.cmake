@@ -1,12 +1,3 @@
-# Common Ambient Variables:
-#   VCPKG_ROOT_DIR = <C:\path\to\current\vcpkg>
-#   TARGET_TRIPLET is the current triplet (x86-windows, etc)
-#   PORT is the current port name (zlib, etc)
-#   CURRENT_BUILDTREES_DIR = ${VCPKG_ROOT_DIR}\buildtrees\${PORT}
-#   CURRENT_PACKAGES_DIR  = ${VCPKG_ROOT_DIR}\packages\${PORT}_${TARGET_TRIPLET}
-#
-
-include(vcpkg_common_functions)
 vcpkg_download_distfile(ARCHIVE
     URLS "https://www.lua.org/ftp/lua-5.3.5.tar.gz"
     FILENAME "lua-5.3.5.tar.gz"
@@ -32,6 +23,26 @@ vcpkg_configure_cmake(
 
 vcpkg_install_cmake()
 
+set(ENABLE_LUA_CPP 0)
+if("cpp" IN_LIST FEATURES)
+    set(ENABLE_LUA_CPP 1)
+    vcpkg_configure_cmake(
+        SOURCE_PATH ${SOURCE_PATH}
+        PREFER_NINJA
+        OPTIONS
+            -DCOMPILE_AS_CPP=ON
+        OPTIONS_DEBUG
+            -DSKIP_INSTALL_HEADERS=ON
+            -DSKIP_INSTALL_TOOLS=ON
+    )
+
+    vcpkg_install_cmake()
+endif()
+
+vcpkg_copy_pdbs()
+
+vcpkg_copy_tool_dependencies(${CURRENT_PACKAGES_DIR}/tools/lua)
+
 if(VCPKG_LIBRARY_LINKAGE STREQUAL dynamic)
     if(NOT VCPKG_CMAKE_SYSTEM_NAME OR VCPKG_CMAKE_SYSTEM_NAME STREQUAL WindowsStore)
         file(READ ${CURRENT_PACKAGES_DIR}/include/luaconf.h LUA_CONF_H)
@@ -40,8 +51,9 @@ if(VCPKG_LIBRARY_LINKAGE STREQUAL dynamic)
     endif()
 endif()
 
-vcpkg_copy_tool_dependencies(${CURRENT_PACKAGES_DIR}/tools/lua)
+# Handle post-build CMake instructions
+configure_file(${CMAKE_CURRENT_LIST_DIR}/vcpkg-cmake-wrapper.cmake.in  ${CURRENT_PACKAGES_DIR}/share/${PORT}/vcpkg-cmake-wrapper.cmake @ONLY)
+file(INSTALL ${CMAKE_CURRENT_LIST_DIR}/usage DESTINATION ${CURRENT_PACKAGES_DIR}/share/${PORT})
 
 # Handle copyright
-file(COPY ${CMAKE_CURRENT_LIST_DIR}/COPYRIGHT DESTINATION ${CURRENT_PACKAGES_DIR}/share/lua/copyright)
-vcpkg_copy_pdbs()
+file(INSTALL ${CMAKE_CURRENT_LIST_DIR}/COPYRIGHT DESTINATION ${CURRENT_PACKAGES_DIR}/share/${PORT} RENAME copyright)
