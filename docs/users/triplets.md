@@ -1,5 +1,7 @@
 # Triplet files
 
+**The latest version of this documentation is available on [GitHub](https://github.com/Microsoft/vcpkg/tree/master/docs/users/triplets.md).**
+
 Triplet is a standard term used in cross compiling as a way to completely capture the target environment (cpu, os, compiler, runtime, etc) in a single convenient name.
 
 In Vcpkg, we use triplets to describe an imaginary "target configuration set" for every library. Within a triplet, libraries are generally built with the same configuration, but it is not a requirement. For example, you could have one triplet that builds `openssl` statically and `zlib` dynamically, one that builds them both statically, and one that builds them both dynamically (all for the same target OS and architecture). A single build will consume files from a single triplet.
@@ -93,7 +95,7 @@ Replaces the default computed list of triplet "Supports" terms.
 
 This option (if set) will override the default set of terms used for qualified dependency resolution and "Supports" field evaluation.
 
-See the [`Supports`](../maintainers/control-files.md#Supports) control file field documentation for more details.
+See the [`"supports"`](../maintainers/manifest-files.md#supports) manifest file field documentation for more details.
 
 > Implementers' Note: this list is extracted via the `vcpkg_get_dep_info` mechanism.
 
@@ -102,13 +104,19 @@ See the [`Supports`](../maintainers/control-files.md#Supports) control file fiel
 ### VCPKG_ENV_PASSTHROUGH
 Instructs vcpkg to allow additional environment variables into the build process.
 
-On Windows, vcpkg builds packages in a special clean environment that is isolated from the current command prompt to ensure build reliability and consistency.
-
-This triplet option can be set to a list of additional environment variables that will be added to the clean environment.
+On Windows, vcpkg builds packages in a special clean environment that is isolated from the current command prompt to
+ensure build reliability and consistency. This triplet option can be set to a list of additional environment variables
+that will be added to the clean environment. The values of these environment variables will be hashed into the package
+abi -- to pass through environment variables without abi tracking, see `VCPKG_ENV_PASSTHROUGH_UNTRACKED`.
 
 See also the `vcpkg env` command for how you can inspect the precise environment that will be used.
 
 > Implementers' Note: this list is extracted via the `vcpkg_get_tags` mechanism.
+
+### VCPKG_ENV_PASSTHROUGH_UNTRACKED
+Instructs vcpkg to allow additional environment variables into the build process without abi tracking.
+
+See `VCPKG_ENV_PASSTHROUGH`.
 
 <a name="VCPKG_VISUAL_STUDIO_PATH"></a>
 ### VCPKG_VISUAL_STUDIO_PATH
