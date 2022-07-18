@@ -3,8 +3,8 @@ vcpkg_check_linkage(ONLY_STATIC_LIBRARY)
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO davisking/dlib
-    REF 70ea028f12e10f4d992a0c4f0169749eae5bb185 #v19.22
-    SHA512 f7c5988d6a1b2384a54a3e1a330c50011d3325bb87b4edd9fa08a2f4daeffdcb276ea21bc1d4cfd766b4e4d0a9c13b235e4b6002aa97af5327b833f91b688fd0
+    REF 6097093ab329fcd19aed03a8fe67949f6971a65d #v19.24
+    SHA512 4bdcecdf0f986abc748245d21616bf2c304461e9a37572c66743f69141fc3f37eb846fdaedc6c910135d986534f7989cbcc52a884ae7a52464fbb2a07b16a327
     HEAD_REF master
     PATCHES
         fix-sqlite3-fftw-linkage.patch

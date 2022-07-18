@@ -5,8 +5,8 @@ endif()
 vcpkg_from_github(
     OUT_SOURCE_PATH SOURCE_PATH
     REPO grpc/grpc
-    REF fc662b7964384b701af5bd3ce6994d2180080eb4  # v1.41.0
-    SHA512 ebb534b5d55f1a84c5ee2ea75f2ef871819d278966dec2610877c2f8ddd87bae80a63cbab0393fb37b81844f261327848821ac641b55963583288e6ec3b94e62
+    REF v1.46.3
+    SHA512 e80322b65c6f8d64dc91bce9f612119191e8d329cac2fbc5da6dad9a2a7ccaa7a501470ed483e555c3ba596e8aff796fbda2747f09e9c4329aed3de4d9b6b666
     HEAD_REF master
     PATCHES
         00001-fix-uwp.patch
@@ -15,11 +15,9 @@ vcpkg_from_github(
         00004-link-gdi32-on-windows.patch
         00005-fix-uwp-error.patch
         00009-use-system-upb.patch
-        00010-add-feature-absl-sync.patch
         00011-fix-csharp_plugin.patch
         snprintf.patch
         00012-fix-use-cxx17.patch
-        00013-build-upbdefs.patch
         00014-pkgconfig-upbdefs.patch
 )
 
@@ -39,7 +37,6 @@ endif()
 vcpkg_check_features(
     OUT_FEATURE_OPTIONS FEATURE_OPTIONS
     FEATURES
-        absl-sync gRPC_ABSL_SYNC_ENABLE
         codegen gRPC_BUILD_CODEGEN
 )
 
@@ -63,8 +60,8 @@ vcpkg_cmake_configure(
         -DgRPC_INSTALL_LIBDIR:STRING=lib
         -DgRPC_INSTALL_INCLUDEDIR:STRING=include
         -DgRPC_INSTALL_CMAKEDIR:STRING=share/grpc
-        -D_gRPC_PROTOBUF_PROTOC_EXECUTABLE="${CURRENT_HOST_INSTALLED_DIR}/tools/protobuf/protoc${VCPKG_HOST_EXECUTABLE_SUFFIX}"
-        -DPROTOBUF_PROTOC_EXECUTABLE="${CURRENT_HOST_INSTALLED_DIR}/tools/protobuf/protoc${VCPKG_HOST_EXECUTABLE_SUFFIX}"
+        "-D_gRPC_PROTOBUF_PROTOC_EXECUTABLE=${CURRENT_HOST_INSTALLED_DIR}/tools/protobuf/protoc${VCPKG_HOST_EXECUTABLE_SUFFIX}"
+        "-DPROTOBUF_PROTOC_EXECUTABLE=${CURRENT_HOST_INSTALLED_DIR}/tools/protobuf/protoc${VCPKG_HOST_EXECUTABLE_SUFFIX}"
     MAYBE_UNUSED_VARIABLES
         gRPC_MSVC_STATIC_RUNTIME
 )
@@ -89,11 +86,8 @@ else()
     configure_file("${CMAKE_CURRENT_LIST_DIR}/gRPCTargets-vcpkg-tools.cmake" "${CURRENT_PACKAGES_DIR}/share/grpc/gRPCTargets-vcpkg-tools.cmake" @ONLY)
 endif()
 
-# Ignore the C# extension DLL in bin/
-SET(VCPKG_POLICY_EMPTY_PACKAGE enabled)
-file(REMOVE_RECURSE "${CURRENT_PACKAGES_DIR}/debug/include")
+file(REMOVE_RECURSE "${CURRENT_PACKAGES_DIR}/debug/share" "${CURRENT_PACKAGES_DIR}/debug/include")
 
 vcpkg_copy_pdbs()
 
 file(INSTALL "${SOURCE_PATH}/LICENSE" DESTINATION "${CURRENT_PACKAGES_DIR}/share/${PORT}" RENAME copyright)
-configure_file("${CMAKE_CURRENT_LIST_DIR}/vcpkg-cmake-wrapper.cmake" "${CURRENT_PACKAGES_DIR}/share/${PORT}/vcpkg-cmake-wrapper.cmake" @ONLY)
